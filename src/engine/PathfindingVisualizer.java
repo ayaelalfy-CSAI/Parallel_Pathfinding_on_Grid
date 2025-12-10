@@ -27,8 +27,6 @@ public class PathfindingVisualizer extends JFrame {
     // Use Dijkstra algorithm
     private PathFinder pathFinder = new DijkstraPathFinder();
 
-    // يحفظ عدد مرات مرور المسارات فوق كل خلية
-    private Map<Cell, Integer> overlapCount = new HashMap<>();
 
     // Multi-path support with visualization
     private List<PathPair> pathPairs = new ArrayList<>();
@@ -476,7 +474,7 @@ public class PathfindingVisualizer extends JFrame {
     }
 
     private Grid createGridCopy() {
-        return new Grid(currentGrid); // نسخة من الشبكة الحالية
+        return new Grid(currentGrid);
     }
 
     private JPanel createBenchmarkPanel() {
@@ -566,9 +564,7 @@ public class PathfindingVisualizer extends JFrame {
             this.cellSize = cellSize;
         }
 
-        /**
-         * ✅ دمج عدة ألوان في لون واحد
-         */
+
         private Color blendColors(List<Color> colors) {
             if (colors.isEmpty()) return Color.WHITE;
             if (colors.size() == 1) return colors.get(0);
@@ -587,10 +583,10 @@ public class PathfindingVisualizer extends JFrame {
             g /= count;
             b /= count;
 
-            // ✅ إضافة بعض التشبع للألوان المدمجة
+
             float[] hsb = Color.RGBtoHSB(r, g, b, null);
-            hsb[1] = Math.min(1.0f, hsb[1] * 1.3f); // زيادة التشبع
-            hsb[2] = Math.min(1.0f, hsb[2] * 1.1f); // زيادة السطوع قليلاً
+            hsb[1] = Math.min(1.0f, hsb[1] * 1.3f);
+            hsb[2] = Math.min(1.0f, hsb[2] * 1.1f);
 
             return Color.getHSBColor(hsb[0], hsb[1], hsb[2]);
         }
@@ -609,15 +605,15 @@ public class PathfindingVisualizer extends JFrame {
                     int y = r * cellSize;
                     int weight = cell.getWeight();
 
-                    // ✅ جمع كل الألوان لهذه الخلية
+
                     List<Color> cellColors = new ArrayList<>();
 
                     if (weight == 0) {
-                        // Obstacle - black
+
                         g2d.setColor(Color.BLACK);
                         g2d.fillRect(x, y, cellSize, cellSize);
                     } else {
-                        // Check if cell is currently being explored
+
                         for (Map.Entry<Integer, Cell> entry : currentCells.entrySet()) {
                             Cell currentCell = entry.getValue();
                             if (currentCell.getRow() == r && currentCell.getCol() == c) {
@@ -626,7 +622,7 @@ public class PathfindingVisualizer extends JFrame {
                             }
                         }
 
-                        // Check if cell has been explored (only if not currently exploring)
+
                         if (cellColors.isEmpty()) {
                             for (Map.Entry<Integer, Set<Cell>> entry : exploredCells.entrySet()) {
                                 for (Cell exploredCell : entry.getValue()) {
@@ -639,7 +635,7 @@ public class PathfindingVisualizer extends JFrame {
                             }
                         }
 
-                        // ✅ Check if cell is part of ANY final path(s)
+
                         if (cellColors.isEmpty()) {
                             for (PathPair pair : pathPairs) {
                                 if (pair.path != null && pair.path.isFound()) {
@@ -653,7 +649,7 @@ public class PathfindingVisualizer extends JFrame {
                             }
                         }
 
-                        // Check if this is a start or goal cell
+
                         if (cellColors.isEmpty()) {
                             for (PathPair pair : pathPairs) {
                                 if (r == pair.start.getRow() && c == pair.start.getCol()) {
@@ -666,23 +662,23 @@ public class PathfindingVisualizer extends JFrame {
                             }
                         }
 
-                        // Check if this is the pending start cell
+
                         if (cellColors.isEmpty() && pendingStartCell != null &&
                                 r == pendingStartCell.getRow() && c == pendingStartCell.getCol()) {
                             cellColors.add(new Color(255, 165, 0));
                         }
 
-                        // ✅ Determine final color
+
                         Color finalColor;
                         if (cellColors.isEmpty()) {
-                            // Default weighted cell color
+
                             float scale = 0.9f - (float) weight / 20f;
                             finalColor = new Color(scale, scale, scale);
                         } else if (cellColors.size() == 1) {
-                            // Single color
+
                             finalColor = cellColors.get(0);
                         } else {
-                            // ✅ Multiple colors - blend them!
+
                             finalColor = blendColors(cellColors);
                         }
 
@@ -690,11 +686,11 @@ public class PathfindingVisualizer extends JFrame {
                         g2d.fillRect(x, y, cellSize, cellSize);
                     }
 
-                    // Draw border
+
                     g2d.setColor(Color.DARK_GRAY);
                     g2d.drawRect(x, y, cellSize, cellSize);
 
-                    // Draw weight number
+
                     if (weight > 0) {
                         g2d.setColor(Color.WHITE);
                         String text = String.valueOf(weight);

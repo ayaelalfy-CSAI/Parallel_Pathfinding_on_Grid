@@ -7,8 +7,6 @@ import core.PathRequest;
 
 import java.util.List;
 
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 public class parallel {
     public static void main(String[] args) {
         Grid grid = new Grid(15, 15, 10, 0.15);
@@ -18,7 +16,7 @@ public class parallel {
         PathFinder finder = new DijkstraPathFinder();
 
         System.out.println("Initial Grid:\n");
-        printGrid(grid, null); // لا يوجد مسار بعد، لذا نمرر null
+        printGrid(grid, null);
         System.out.println("\nTesting 5 runs...\n");
 
         for (int i = 0; i < 5; i++) {
@@ -29,19 +27,17 @@ public class parallel {
         }
     }
 
-    /**
-     * دالة لطباعة الشبكة مع تمييز المسار إذا تم تمريره
-     */
+
     public static void printGrid(Grid grid, List<Cell> path) {
         for (int row = 0; row < grid.getRows(); row++) {
             for (int col = 0; col < grid.getCols(); col++) {
                 Cell cell = grid.getCell(row, col);
                 if (path != null && path.contains(cell)) {
-                    System.out.print(" P "); // جزء من المسار
+                    System.out.print(" P ");
                 } else if (cell.getWeight() > 1) {
-                    System.out.print(" X "); // عقبة أو خلية ذات وزن مرتفع
+                    System.out.print(" X ");
                 } else {
-                    System.out.print(" . "); // خلية عادية
+                    System.out.print(" . ");
                 }
             }
             System.out.println();
