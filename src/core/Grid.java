@@ -16,10 +16,25 @@ public class Grid {
     public Grid(int rows, int cols, int maxWeight, double obstacleDensity) {
         this.rows = rows;
         this.cols = cols;
-        this.cells = new Cell[rows][cols];
         this.obstacleDensity = obstacleDensity;
+        this.cells = new Cell[rows][cols];
         initializeRandomGrid(maxWeight);
     }
+
+    public Grid(Grid original) {
+        this.rows = original.rows;
+        this.cols = original.cols;
+        this.obstacleDensity = original.obstacleDensity;
+        this.cells = new Cell[rows][cols];
+
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                Cell originalCell = original.getCell(r, c);
+                this.cells[r][c] = new Cell(originalCell.getRow(), originalCell.getCol(), originalCell.getWeight());
+            }
+        }
+    }
+
 
     private void initializeRandomGrid(int maxWeight) {
         Random rand = new Random();

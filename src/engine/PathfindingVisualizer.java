@@ -1,39 +1,65 @@
 package engine;
 
-import core.Cell;
-import core.Grid;
-import core.Path;
+import core.*;
+import algorithm.DijkstraPathFinder;
+import algorithm.PathFinder;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.ActionEvent;
-import java.util.ArrayList;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.util.*;
 import java.util.List;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.PriorityQueue;
-import java.util.Collections;
+import java.util.concurrent.*;
 
 public class PathfindingVisualizer extends JFrame {
     private Grid currentGrid;
-    private Path currentPath = Path.notFound();
-    private Cell startCell;
-    private Cell goalCell;
     private GridPanel gridPanel;
-    private JTextField startRField, startCField, goalRField, goalCField;
     private JLabel statusLabel;
+    private JLabel executionTimeLabel;
     private DefaultTableModel benchmarkTableModel;
-    private Set<Cell> visitedCells = new HashSet<>();
-    private Set<Cell> currentlyExploring = new HashSet<>();
+    private DefaultTableModel pathTableModel;
     private boolean isAnimating = false;
+    private JComboBox<String> executionModeCombo;
 
-    private static final int[] THREAD_COUNTS = {2, 4, 6, 8};
+    // Use Dijkstra algorithm
+    private PathFinder pathFinder = new DijkstraPathFinder();
+
+    // يحفظ عدد مرات مرور المسارات فوق كل خلية
+    private Map<Cell, Integer> overlapCount = new HashMap<>();
+
+    // Multi-path support with visualization
+    private List<PathPair> pathPairs = new ArrayList<>();
+    private Cell pendingStartCell = null;
+
+    // Visualization state
+    private Map<Integer, Set<Cell>> exploredCells = new ConcurrentHashMap<>();
+    private Map<Integer, Cell> currentCells = new ConcurrentHashMap<>();
+
+    private static final Color[] PATH_COLORS = {
+            new Color(150, 0, 255),  // Blue
+            new Color(255, 100, 150),  // Pink
+            new Color(0, 255, 0),  // Light Green
+            new Color(255, 200, 100),  // Orange
+            new Color(0, 0, 255),  // Purple
+            new Color(100, 255, 255),  // Cyan
+            new Color(100, 100, 100),  // Yellow
+            new Color(255, 0, 0)   // Light Red
+    };
+
+    private static final int[] THREAD_COUNTS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
     private static final String[] BENCHMARK_TABLE_COLUMNS = {"Threads", "Seq Time (ms)", "Par Time (ms)", "Speedup", "Throughput (req/s)", "Accuracy"};
+    private static final String[] PATH_TABLE_COLUMNS = {"#", "Start", "Goal", "Cost", "Length", "Status"};
+
+    // Execution modes
+    private static final String MODE_SEQUENTIAL = "Sequential";
+    private static final String MODE_PARALLEL = "Parallel";
 
     public PathfindingVisualizer() {
         this.currentGrid = PathfindingExperiment.createVisualizationGrid();
-        setTitle("Project 6 - Interactive Parallel Pathfinding");
+        setTitle("Project 6 - Interactive Parallel Pathfinding (Multi-Path with Dijkstra)");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
         JTabbedPane tabbedPane = new JTabbedPane();
@@ -53,13 +79,35 @@ public class PathfindingVisualizer extends JFrame {
         gridPanel = new GridPanel(cellSize);
         gridPanel.setPreferredSize(new Dimension(currentGrid.getCols() * cellSize, currentGrid.getRows() * cellSize));
 
+        // Add mouse listener for cell selection
+        gridPanel.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                handleCellClick(e.getX() / cellSize, e.getY() / cellSize);
+            }
+        });
+
         JPanel controlPanel = createControlPanel();
-        statusLabel = new JLabel("Grid created: 15x15. Enter coordinates (0-14) and click 'Find Path'.");
+        JPanel pathListPanel = createPathListPanel();
+
+        statusLabel = new JLabel("Click on a cell to select START, then click another cell for GOAL.");
         statusLabel.setBorder(BorderFactory.createEmptyBorder(5, 0, 0, 0));
 
+        executionTimeLabel = new JLabel("Algorithm: " + pathFinder.getFinderName());
+        executionTimeLabel.setBorder(BorderFactory.createEmptyBorder(5, 0, 0, 0));
+        executionTimeLabel.setFont(new Font("Arial", Font.BOLD, 12));
+
+        JPanel statusPanel = new JPanel(new GridLayout(2, 1));
+        statusPanel.add(statusLabel);
+        statusPanel.add(executionTimeLabel);
+
+        JPanel centerPanel = new JPanel(new BorderLayout());
+        centerPanel.add(gridPanel, BorderLayout.CENTER);
+        centerPanel.add(pathListPanel, BorderLayout.EAST);
+
         mainPanel.add(controlPanel, BorderLayout.NORTH);
-        mainPanel.add(gridPanel, BorderLayout.CENTER);
-        mainPanel.add(statusLabel, BorderLayout.SOUTH);
+        mainPanel.add(centerPanel, BorderLayout.CENTER);
+        mainPanel.add(statusPanel, BorderLayout.SOUTH);
 
         return mainPanel;
     }
@@ -67,144 +115,368 @@ public class PathfindingVisualizer extends JFrame {
     private JPanel createControlPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
 
-        startRField = new JTextField(2);
-        startCField = new JTextField(2);
-        goalRField = new JTextField(2);
-        goalCField = new JTextField(2);
-        startRField.setText("0");
-        startCField.setText("0");
-        goalRField.setText(String.valueOf(PathfindingExperiment.VIS_GRID_SIZE - 1));
-        goalCField.setText(String.valueOf(PathfindingExperiment.VIS_GRID_SIZE - 1));
-        panel.add(new JLabel("Start (R, C):"));
-        panel.add(startRField);
-        panel.add(startCField);
-        panel.add(new JLabel("Goal (R, C):"));
-        panel.add(goalRField);
-        panel.add(goalCField);
-        JButton findButton = new JButton("Find Path");
-        findButton.addActionListener(this::runVisualizationPath);
-        panel.add(findButton);
+        // Execution mode selector
+        panel.add(new JLabel("Execution Mode:"));
+        executionModeCombo = new JComboBox<>(new String[]{MODE_SEQUENTIAL, MODE_PARALLEL});
+        executionModeCombo.setToolTipText("Choose between sequential (one-by-one) or parallel (concurrent) execution");
+        panel.add(executionModeCombo);
+
+        JButton findAllButton = new JButton("Find All Paths");
+        findAllButton.addActionListener(this::findAllPaths);
+        findAllButton.setToolTipText("Execute pathfinding based on selected mode");
+        panel.add(findAllButton);
+
+        JButton clearAllButton = new JButton("Clear All Paths");
+        clearAllButton.addActionListener(e -> {
+            pathPairs.clear();
+            pendingStartCell = null;
+            exploredCells.clear();
+            currentCells.clear();
+
+            // إعادة الشبكة الأصلية
+            currentGrid.resetAllCells();
+
+            updatePathTable();
+            gridPanel.repaint();
+            statusLabel.setText("All paths cleared. Click on a cell to select START.");
+            executionTimeLabel.setText("Algorithm: " + pathFinder.getFinderName());
+        });
+
+        panel.add(clearAllButton);
 
         return panel;
     }
 
-    private void runVisualizationPath(ActionEvent e) {
+    private JPanel createPathListPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("Path List"));
+        panel.setPreferredSize(new Dimension(300, 0));
+
+        pathTableModel = new DefaultTableModel(PATH_TABLE_COLUMNS, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+
+        JTable table = new JTable(pathTableModel);
+        table.setFillsViewportHeight(true);
+        table.setRowHeight(25);
+
+        JScrollPane scrollPane = new JScrollPane(table);
+        panel.add(scrollPane, BorderLayout.CENTER);
+
+        JButton removeButton = new JButton("Remove Selected");
+        removeButton.addActionListener(e -> {
+            int selectedRow = table.getSelectedRow();
+            if (selectedRow >= 0 && selectedRow < pathPairs.size()) {
+                pathPairs.remove(selectedRow);
+                exploredCells.remove(selectedRow);
+                currentCells.remove(selectedRow);
+                updatePathTable();
+                gridPanel.repaint();
+                statusLabel.setText("Path removed. " + pathPairs.size() + " path(s) remaining.");
+            }
+        });
+        panel.add(removeButton, BorderLayout.SOUTH);
+
+        return panel;
+    }
+
+    private void handleCellClick(int col, int row) {
         if (isAnimating) {
             statusLabel.setText("Animation in progress. Please wait...");
             return;
         }
 
-        try {
-            int startR = Integer.parseInt(startRField.getText());
-            int startC = Integer.parseInt(startCField.getText());
-            int goalR = Integer.parseInt(goalRField.getText());
-            int goalC = Integer.parseInt(goalCField.getText());
-            if (startR < 0 || startR >= currentGrid.getRows() ||
-                    startC < 0 || startC >= currentGrid.getCols() ||
-                    goalR < 0 || goalR >= currentGrid.getRows() ||
-                    goalC < 0 || goalC >= currentGrid.getCols()) {
-                statusLabel.setText("Error: Coordinates are out of bounds (0-" + (PathfindingExperiment.VIS_GRID_SIZE - 1) + ").");
+        if (row < 0 || row >= currentGrid.getRows() || col < 0 || col >= currentGrid.getCols()) {
+            return;
+        }
+
+        Cell clickedCell = currentGrid.getCell(row, col);
+
+        if (pendingStartCell == null) {
+            // Select start cell
+            pendingStartCell = clickedCell;
+            statusLabel.setText(String.format("START selected at (%d, %d). Now click on a cell for GOAL.", row, col));
+            gridPanel.repaint();
+        } else {
+            // Select goal cell
+            if (clickedCell.getRow() == pendingStartCell.getRow() &&
+                    clickedCell.getCol() == pendingStartCell.getCol()) {
+                statusLabel.setText("START and GOAL cannot be the same. Click on a different cell for GOAL.");
                 return;
             }
-            visitedCells.clear();
-            currentlyExploring.clear();
-            currentPath = Path.notFound();
-            startCell = currentGrid.getCell(startR, startC);
-            goalCell = currentGrid.getCell(goalR, goalC);
-            gridPanel.repaint();
-            animatePathfinding(startR, startC, goalR, goalC);
 
-        } catch (NumberFormatException ex) {
-            statusLabel.setText("Error: Please enter valid integer coordinates.");
+            Color pathColor = PATH_COLORS[pathPairs.size() % PATH_COLORS.length];
+            PathPair newPair = new PathPair(pendingStartCell, clickedCell, pathColor);
+            pathPairs.add(newPair);
+
+            pendingStartCell = null;
+            updatePathTable();
+            gridPanel.repaint();
+
+            statusLabel.setText(String.format("Path #%d added: (%d,%d) → (%d,%d). Click for next START or 'Find All Paths'.",
+                    pathPairs.size(),
+                    newPair.start.getRow(), newPair.start.getCol(),
+                    newPair.goal.getRow(), newPair.goal.getCol()));
         }
     }
 
-    private void animatePathfinding(int startR, int startC, int goalR, int goalC) {
+    private void updatePathTable() {
+        pathTableModel.setRowCount(0);
+        for (int i = 0; i < pathPairs.size(); i++) {
+            PathPair pair = pathPairs.get(i);
+            String status = pair.path == null ? "Not computed" :
+                    (pair.path.isFound() ? "Found" : "Not found");
+            String cost = pair.path != null && pair.path.isFound() ?
+                    String.format("%.2f", pair.path.getTotalCost()) : "-";
+            String length = pair.path != null && pair.path.isFound() ?
+                    String.valueOf(pair.path.getCells().size()) : "-";
+
+            pathTableModel.addRow(new Object[]{
+                    i + 1,
+                    String.format("(%d,%d)", pair.start.getRow(), pair.start.getCol()),
+                    String.format("(%d,%d)", pair.goal.getRow(), pair.goal.getCol()),
+                    cost,
+                    length,
+                    status
+            });
+        }
+    }
+
+    private void findAllPaths(ActionEvent e) {
+        if (isAnimating) {
+            statusLabel.setText("Animation in progress. Please wait...");
+            return;
+        }
+
+        if (pathPairs.isEmpty()) {
+            statusLabel.setText("No paths to find. Click on cells to add start-goal pairs.");
+            return;
+        }
+
+        String mode = (String) executionModeCombo.getSelectedItem();
+
+        if (MODE_SEQUENTIAL.equals(mode)) {
+            executeSequential();
+        } else {
+            executeParallel();
+        }
+    }
+
+    private void executeSequential() {
         isAnimating = true;
-        statusLabel.setText("Searching for path...");
+        exploredCells.clear();
+        currentCells.clear();
+        statusLabel.setText("Finding paths SEQUENTIALLY using Dijkstra (one-by-one)...");
+        executionTimeLabel.setText("Execution in progress...");
 
-        new SwingWorker<Path, Cell>() {
+        new SwingWorker<Long, Void>() {
             @Override
-            protected Path doInBackground() throws Exception {
-                Grid grid = currentGrid;
-                Cell start = grid.getCell(startR, startC);
-                Cell goal = grid.getCell(goalR, goalC);
-                grid.resetAllCells();
-                PriorityQueue<Cell> openSet = new PriorityQueue<>();
-                start.setPathCost(0);
-                openSet.add(start);
+            protected Long doInBackground() throws Exception {
+                long startTime = System.nanoTime();
 
-                while (!openSet.isEmpty()) {
-                    Cell current = openSet.poll();
-                    publish(current);
-                    Thread.sleep(100);
-                    if (current.equals(goal)) {
-                        return reconstructPath(start, goal);
-                    }
+                for (int i = 0; i < pathPairs.size(); i++) {
+                    PathPair pair = pathPairs.get(i);
+                    exploredCells.put(i, new HashSet<>());
 
-                    for (Cell neighbor : grid.getNeighbors(current)) {
-                        double newCost = current.getPathCost() + neighbor.getWeight();
-                        if (newCost < neighbor.getPathCost()) {
-                            neighbor.setPathCost(newCost);
-                            neighbor.setPredecessor(current);
-                            if (openSet.contains(neighbor)) {
-                                openSet.remove(neighbor);
-                            }
-                            openSet.add(neighbor);
-                        }
-                    }
-                }
+                    Grid gridCopy = createGridCopy();
+                    Cell startCell = gridCopy.getCell(pair.start.getRow(), pair.start.getCol());
+                    Cell goalCell = gridCopy.getCell(pair.goal.getRow(), pair.goal.getCol());
 
-                return Path.notFound();
-            }
+                    // Use visualization version for UI
+                    pair.path = findPathWithVisualization(gridCopy, startCell, goalCell, i);
 
-            @Override
-            protected void process(List<Cell> chunks) {
-                for (Cell cell : chunks) {
-                    visitedCells.addAll(currentlyExploring);
-                    currentlyExploring.clear();
-                    currentlyExploring.add(cell);
+                    // Clear exploration visualization after path is found
+                    Thread.sleep(500);
+                    currentCells.remove(i);
+                    exploredCells.get(i).clear();
                     gridPanel.repaint();
                 }
+
+                long endTime = System.nanoTime();
+                return (endTime - startTime) / 1_000_000;
             }
 
             @Override
             protected void done() {
                 try {
-                    currentPath = get();
-                    visitedCells.addAll(currentlyExploring);
-                    currentlyExploring.clear();
-
-                    if (currentPath.isFound()) {
-                        statusLabel.setText(String.format("Path found! Cost: %.2f, Length: %d",
-                                currentPath.getTotalCost(), currentPath.getCells().size()));
-                    } else {
-                        statusLabel.setText("Path not found (obstacle or unreachable).");
-                    }
-                    gridPanel.repaint();
-                } catch (Exception ex) {
-                    statusLabel.setText("Error during pathfinding: " + ex.getMessage());
-                } finally {
+                    long executionTimeMs = get();
                     isAnimating = false;
+                    updatePathTable();
+                    gridPanel.repaint();
+
+                    long foundCount = pathPairs.stream().filter(p -> p.path != null && p.path.isFound()).count();
+                    statusLabel.setText(String.format("SEQUENTIAL execution complete! %d/%d paths found.",
+                            foundCount, pathPairs.size()));
+                    executionTimeLabel.setText(String.format("⏱ Sequential Time: %d ms | Algorithm: %s",
+                            executionTimeMs, pathFinder.getFinderName()));
+                } catch (Exception ex) {
+                    statusLabel.setText("Error during sequential execution: " + ex.getMessage());
+                    ex.printStackTrace();
                 }
             }
         }.execute();
     }
 
+    private void executeParallel() {
+        isAnimating = true;
+        exploredCells.clear();
+        currentCells.clear();
+        statusLabel.setText("Finding paths IN PARALLEL using Dijkstra (concurrent)...");
+        executionTimeLabel.setText("Execution in progress...");
+
+        new SwingWorker<Long, Void>() {
+            @Override
+            protected Long doInBackground() throws Exception {
+                long startTime = System.nanoTime();
+
+                int numThreads = Math.min(pathPairs.size(), Runtime.getRuntime().availableProcessors());
+                ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+
+                List<Future<PathResult>> futures = new ArrayList<>();
+
+                for (int i = 0; i < pathPairs.size(); i++) {
+                    final int index = i;
+                    final PathPair pair = pathPairs.get(i);
+                    exploredCells.put(i, Collections.synchronizedSet(new HashSet<>()));
+
+                    Future<PathResult> future = executor.submit(() -> {
+                        Grid gridCopy = createGridCopy();
+                        Cell startCell = gridCopy.getCell(pair.start.getRow(), pair.start.getCol());
+                        Cell goalCell = gridCopy.getCell(pair.goal.getRow(), pair.goal.getCol());
+
+                        // Use visualization version for UI
+                        Path path = findPathWithVisualization(gridCopy, startCell, goalCell, index);
+
+                        // Clear exploration visualization after path is found
+                        Thread.sleep(500);
+                        currentCells.remove(index);
+                        exploredCells.get(index).clear();
+
+                        return new PathResult(index, path);
+                    });
+
+                    futures.add(future);
+                }
+
+                for (Future<PathResult> future : futures) {
+                    try {
+                        PathResult result = future.get();
+                        pathPairs.get(result.index).path = result.path;
+                    } catch (Exception e) {
+                        System.err.println("Error in parallel task: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                }
+
+                executor.shutdown();
+                executor.awaitTermination(30, TimeUnit.SECONDS);
+
+                long endTime = System.nanoTime();
+                return (endTime - startTime) / 1_000_000;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    long executionTimeMs = get();
+                    isAnimating = false;
+                    updatePathTable();
+                    gridPanel.repaint();
+
+                    long foundCount = pathPairs.stream().filter(p -> p.path != null && p.path.isFound()).count();
+                    statusLabel.setText(String.format("PARALLEL execution complete! %d/%d paths found.",
+                            foundCount, pathPairs.size()));
+                    executionTimeLabel.setText(String.format("⚡ Parallel Time: %d ms (using %d threads) | Algorithm: %s",
+                            executionTimeMs, Math.min(pathPairs.size(), Runtime.getRuntime().availableProcessors()),
+                            pathFinder.getFinderName()));
+                } catch (Exception ex) {
+                    statusLabel.setText("Error during parallel execution: " + ex.getMessage());
+                    ex.printStackTrace();
+                }
+            }
+        }.execute();
+    }
+
+    /**
+     * Wrapper method that uses DijkstraPathFinder internally but adds visualization
+     * This implements the same Dijkstra algorithm but with UI updates
+     */
+    private Path findPathWithVisualization(Grid grid, Cell start, Cell goal, int pathIndex) throws InterruptedException {
+        // Reset the grid for pathfinding
+        grid.resetAllCells();
+
+        // PriorityQueue now uses NodeCell instead of Cell
+        PriorityQueue<NodeCell> openSet = new PriorityQueue<>();
+        Set<Cell> visited = new HashSet<>();
+
+        start.setPathCost(0);
+        openSet.add(new NodeCell(start, 0));
+
+        while (!openSet.isEmpty()) {
+            NodeCell node = openSet.poll();
+            Cell current = node.cell;
+
+            if (visited.contains(current)) continue;
+            visited.add(current);
+
+            // Visualization update
+            currentCells.put(pathIndex, current);
+            exploredCells.get(pathIndex).add(current);
+            SwingUtilities.invokeLater(() -> gridPanel.repaint());
+            Thread.sleep(50);
+
+            // Goal reached
+            if (current.equals(goal)) {
+                return reconstructPath(start, current);
+            }
+
+            // Process neighbors
+            for (Cell neighbor : grid.getNeighbors(current)) {
+                if (visited.contains(neighbor)) continue;
+
+                double newCost = current.getPathCost() + neighbor.getWeight();
+
+                if (newCost < neighbor.getPathCost()) {
+                    neighbor.setPathCost(newCost);
+                    neighbor.setPredecessor(current);
+
+                    openSet.add(new NodeCell(neighbor, newCost));
+                }
+            }
+        }
+
+        return Path.notFound();
+    }
+
+    /**
+     * Reconstruct the path from start to goal
+     * This is the same logic as in DijkstraPathFinder
+     */
     private Path reconstructPath(Cell start, Cell goal) {
         List<Cell> path = new ArrayList<>();
         Cell current = goal;
         double totalCost = goal.getPathCost();
+
         while (current != null) {
             path.add(current);
             if (current.equals(start)) break;
             current = current.getPredecessor();
         }
+
         Collections.reverse(path);
+
         if (path.isEmpty() || !path.get(0).equals(start)) {
             return Path.notFound();
         }
+
         return new Path(path, totalCost);
+    }
+
+    private Grid createGridCopy() {
+        return new Grid(currentGrid); // نسخة من الشبكة الحالية
     }
 
     private JPanel createBenchmarkPanel() {
@@ -235,7 +507,6 @@ public class PathfindingVisualizer extends JFrame {
                     publish(result);
                     allResults.add(result);
                 }
-
                 return allResults;
             }
 
@@ -256,7 +527,7 @@ public class PathfindingVisualizer extends JFrame {
             @Override
             protected void done() {
                 sourceButton.setEnabled(true);
-                JOptionPane.showMessageDialog(null,
+                JOptionPane.showMessageDialog(PathfindingVisualizer.this,
                         "Benchmark Complete! Results added to table.",
                         "Finished",
                         JOptionPane.INFORMATION_MESSAGE);
@@ -264,10 +535,64 @@ public class PathfindingVisualizer extends JFrame {
         }.execute();
     }
 
+    private static class PathResult {
+        int index;
+        Path path;
+
+        PathResult(int index, Path path) {
+            this.index = index;
+            this.path = path;
+        }
+    }
+
+    private class PathPair {
+        Cell start;
+        Cell goal;
+        Color color;
+        Path path;
+
+        PathPair(Cell start, Cell goal, Color color) {
+            this.start = start;
+            this.goal = goal;
+            this.color = color;
+            this.path = null;
+        }
+    }
+
     private class GridPanel extends JPanel {
         private final int cellSize;
+
         public GridPanel(int cellSize) {
             this.cellSize = cellSize;
+        }
+
+        /**
+         * ✅ دمج عدة ألوان في لون واحد
+         */
+        private Color blendColors(List<Color> colors) {
+            if (colors.isEmpty()) return Color.WHITE;
+            if (colors.size() == 1) return colors.get(0);
+
+            // Average RGB method
+            int r = 0, g = 0, b = 0;
+
+            for (Color color : colors) {
+                r += color.getRed();
+                g += color.getGreen();
+                b += color.getBlue();
+            }
+
+            int count = colors.size();
+            r /= count;
+            g /= count;
+            b /= count;
+
+            // ✅ إضافة بعض التشبع للألوان المدمجة
+            float[] hsb = Color.RGBtoHSB(r, g, b, null);
+            hsb[1] = Math.min(1.0f, hsb[1] * 1.3f); // زيادة التشبع
+            hsb[2] = Math.min(1.0f, hsb[2] * 1.1f); // زيادة السطوع قليلاً
+
+            return Color.getHSBColor(hsb[0], hsb[1], hsb[2]);
         }
 
         @Override
@@ -282,31 +607,94 @@ public class PathfindingVisualizer extends JFrame {
                     Cell cell = currentGrid.getCell(r, c);
                     int x = c * cellSize;
                     int y = r * cellSize;
-                    Color color;
                     int weight = cell.getWeight();
 
+                    // ✅ جمع كل الألوان لهذه الخلية
+                    List<Color> cellColors = new ArrayList<>();
+
                     if (weight == 0) {
-                        color = Color.BLACK; // Obstacle
-                    } else if (cell.equals(startCell)) {
-                        color = new Color(0, 150, 0); // Dark Green (Start)
-                    } else if (cell.equals(goalCell)) {
-                        color = Color.RED; // Red (Goal)
-                    } else if (currentPath.isFound() && currentPath.getCells().contains(cell)) {
-                        color = new Color(100, 150, 255); // Path Blue
-                    } else if (currentlyExploring.contains(cell)) {
-                        color = new Color(255, 255, 0); // Yellow (Currently testing)
-                    } else if (visitedCells.contains(cell)) {
-                        color = new Color(0, 200, 0); // Green (Selected/Visited)
+                        // Obstacle - black
+                        g2d.setColor(Color.BLACK);
+                        g2d.fillRect(x, y, cellSize, cellSize);
                     } else {
-                        // Weighted cells: scale brightness based on weight
-                        float scale = 0.9f - (float) weight / (float) 20;
-                        color = new Color(scale, scale, scale);
+                        // Check if cell is currently being explored
+                        for (Map.Entry<Integer, Cell> entry : currentCells.entrySet()) {
+                            Cell currentCell = entry.getValue();
+                            if (currentCell.getRow() == r && currentCell.getCol() == c) {
+                                PathPair pair = pathPairs.get(entry.getKey());
+                                cellColors.add(brighten(pair.color, 1.5));
+                            }
+                        }
+
+                        // Check if cell has been explored (only if not currently exploring)
+                        if (cellColors.isEmpty()) {
+                            for (Map.Entry<Integer, Set<Cell>> entry : exploredCells.entrySet()) {
+                                for (Cell exploredCell : entry.getValue()) {
+                                    if (exploredCell.getRow() == r && exploredCell.getCol() == c) {
+                                        PathPair pair = pathPairs.get(entry.getKey());
+                                        cellColors.add(lighten(pair.color, 0.3));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // ✅ Check if cell is part of ANY final path(s)
+                        if (cellColors.isEmpty()) {
+                            for (PathPair pair : pathPairs) {
+                                if (pair.path != null && pair.path.isFound()) {
+                                    for (Cell pathCell : pair.path.getCells()) {
+                                        if (pathCell.getRow() == r && pathCell.getCol() == c) {
+                                            cellColors.add(pair.color);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Check if this is a start or goal cell
+                        if (cellColors.isEmpty()) {
+                            for (PathPair pair : pathPairs) {
+                                if (r == pair.start.getRow() && c == pair.start.getCol()) {
+                                    cellColors.add(darken(pair.color, 0.5));
+                                    break;
+                                } else if (r == pair.goal.getRow() && c == pair.goal.getCol()) {
+                                    cellColors.add(darken(pair.color, 0.7));
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Check if this is the pending start cell
+                        if (cellColors.isEmpty() && pendingStartCell != null &&
+                                r == pendingStartCell.getRow() && c == pendingStartCell.getCol()) {
+                            cellColors.add(new Color(255, 165, 0));
+                        }
+
+                        // ✅ Determine final color
+                        Color finalColor;
+                        if (cellColors.isEmpty()) {
+                            // Default weighted cell color
+                            float scale = 0.9f - (float) weight / 20f;
+                            finalColor = new Color(scale, scale, scale);
+                        } else if (cellColors.size() == 1) {
+                            // Single color
+                            finalColor = cellColors.get(0);
+                        } else {
+                            // ✅ Multiple colors - blend them!
+                            finalColor = blendColors(cellColors);
+                        }
+
+                        g2d.setColor(finalColor);
+                        g2d.fillRect(x, y, cellSize, cellSize);
                     }
 
-                    g2d.setColor(color);
-                    g2d.fillRect(x, y, cellSize, cellSize);
+                    // Draw border
                     g2d.setColor(Color.DARK_GRAY);
                     g2d.drawRect(x, y, cellSize, cellSize);
+
+                    // Draw weight number
                     if (weight > 0) {
                         g2d.setColor(Color.WHITE);
                         String text = String.valueOf(weight);
@@ -317,6 +705,30 @@ public class PathfindingVisualizer extends JFrame {
                     }
                 }
             }
+        }
+
+        private Color darken(Color color, double factor) {
+            return new Color(
+                    Math.max(0, (int) (color.getRed() * factor)),
+                    Math.max(0, (int) (color.getGreen() * factor)),
+                    Math.max(0, (int) (color.getBlue() * factor))
+            );
+        }
+
+        private Color lighten(Color color, double factor) {
+            return new Color(
+                    Math.min(255, (int) (color.getRed() + (255 - color.getRed()) * factor)),
+                    Math.min(255, (int) (color.getGreen() + (255 - color.getGreen()) * factor)),
+                    Math.min(255, (int) (color.getBlue() + (255 - color.getBlue()) * factor))
+            );
+        }
+
+        private Color brighten(Color color, double factor) {
+            return new Color(
+                    Math.min(255, (int) (color.getRed() * factor)),
+                    Math.min(255, (int) (color.getGreen() * factor)),
+                    Math.min(255, (int) (color.getBlue() * factor))
+            );
         }
     }
 }
