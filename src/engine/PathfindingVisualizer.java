@@ -13,6 +13,7 @@ import java.awt.event.MouseEvent;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.function.Consumer;
 
 public class PathfindingVisualizer extends JFrame {
     private Grid currentGrid;
@@ -330,47 +331,56 @@ public class PathfindingVisualizer extends JFrame {
             protected Long doInBackground() throws Exception {
                 long startTime = System.nanoTime();
 
-                int numThreads = Math.min(pathPairs.size(), Runtime.getRuntime().availableProcessors());
-                ExecutorService executor = Executors.newFixedThreadPool(numThreads);
 
-                List<Future<PathResult>> futures = new ArrayList<>();
-
+                List<PathRequest> requests = new ArrayList<>();
                 for (int i = 0; i < pathPairs.size(); i++) {
-                    final int index = i;
-                    final PathPair pair = pathPairs.get(i);
+                    PathPair pair = pathPairs.get(i);
+
+
                     exploredCells.put(i, Collections.synchronizedSet(new HashSet<>()));
 
-                    Future<PathResult> future = executor.submit(() -> {
-                        Grid gridCopy = createGridCopy();
-                        Cell startCell = gridCopy.getCell(pair.start.getRow(), pair.start.getCol());
-                        Cell goalCell = gridCopy.getCell(pair.goal.getRow(), pair.goal.getCol());
+                    Grid gridCopy = createGridCopy();
+                    Cell startCell = gridCopy.getCell(pair.start.getRow(), pair.start.getCol());
+                    Cell goalCell = gridCopy.getCell(pair.goal.getRow(), pair.goal.getCol());
 
-                        // Use visualization version for UI
-                        Path path = findPathWithVisualization(gridCopy, startCell, goalCell, index);
-
-                        // Clear exploration visualization after path is found
-                        Thread.sleep(500);
-                        currentCells.remove(index);
-                        exploredCells.get(index).clear();
-
-                        return new PathResult(index, path);
-                    });
-
-                    futures.add(future);
+                    requests.add(new PathRequest(i + 1, gridCopy, startCell, goalCell));
                 }
 
-                for (Future<PathResult> future : futures) {
-                    try {
-                        PathResult result = future.get();
-                        pathPairs.get(result.index).path = result.path;
-                    } catch (Exception e) {
-                        System.err.println("Error in parallel task: " + e.getMessage());
-                        e.printStackTrace();
+
+                VisualizationCallback callback = (pathIndex, cell, isCurrent) -> {
+                    if (isCurrent) {
+
+                        currentCells.put(pathIndex, cell);
+                    } else {
+
+                        exploredCells.get(pathIndex).add(cell);
                     }
+
+
+                    SwingUtilities.invokeLater(() -> gridPanel.repaint());
+
+
+                    Thread.sleep(30); // 30ms delay للـ animation
+                };
+
+
+                int numThreads = Math.min(pathPairs.size(), Runtime.getRuntime().availableProcessors());
+                ParallelPathfindingEngine engine = new ParallelPathfindingEngine(numThreads);
+
+                List<Path> results = engine.processRequestsWithVisualization(requests, callback);
+
+
+                for (int i = 0; i < results.size(); i++) {
+                    pathPairs.get(i).path = results.get(i);
                 }
 
-                executor.shutdown();
-                executor.awaitTermination(30, TimeUnit.SECONDS);
+
+                Thread.sleep(500);
+                currentCells.clear();
+                for (Set<Cell> cells : exploredCells.values()) {
+                    cells.clear();
+                }
+                SwingUtilities.invokeLater(() -> gridPanel.repaint());
 
                 long endTime = System.nanoTime();
                 return (endTime - startTime) / 1_000_000;
@@ -384,11 +394,17 @@ public class PathfindingVisualizer extends JFrame {
                     updatePathTable();
                     gridPanel.repaint();
 
-                    long foundCount = pathPairs.stream().filter(p -> p.path != null && p.path.isFound()).count();
+                    long foundCount = pathPairs.stream()
+                            .filter(p -> p.path != null && p.path.isFound())
+                            .count();
+
                     statusLabel.setText(String.format("PARALLEL execution complete! %d/%d paths found.",
                             foundCount, pathPairs.size()));
-                    executionTimeLabel.setText(String.format("⚡ Parallel Time: %d ms (using %d threads) | Algorithm: %s",
-                            executionTimeMs, Math.min(pathPairs.size(), Runtime.getRuntime().availableProcessors()),
+
+                    executionTimeLabel.setText(String.format(
+                            "⚡ Parallel Time: %d ms (using %d threads) | Algorithm: %s",
+                            executionTimeMs,
+                            Math.min(pathPairs.size(), Runtime.getRuntime().availableProcessors()),
                             pathFinder.getFinderName()));
                 } catch (Exception ex) {
                     statusLabel.setText("Error during parallel execution: " + ex.getMessage());
@@ -397,6 +413,7 @@ public class PathfindingVisualizer extends JFrame {
             }
         }.execute();
     }
+
 
     /**
      * Wrapper method that uses DijkstraPathFinder internally but adds visualization
