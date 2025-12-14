@@ -48,7 +48,7 @@ public class PathfindingVisualizer extends JFrame {
             new Color(255, 0, 0)   // Light Red
     };
 
-    private static final int[] THREAD_COUNTS = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    private static final int[] THREAD_COUNTS = {2 ,4 ,6 ,8 ,10 ,12 ,14 ,16};
     private static final String[] BENCHMARK_TABLE_COLUMNS = {"Threads", "Seq Time (ms)", "Par Time (ms)", "Speedup", "Throughput (req/s)", "Accuracy"};
     private static final String[] PATH_TABLE_COLUMNS = {"#", "Start", "Goal", "Cost", "Length", "Status"};
 
