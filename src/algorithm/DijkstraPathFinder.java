@@ -7,18 +7,14 @@ import java.util.ArrayList;
 import java.util.*;
 
 public class DijkstraPathFinder implements PathFinder {
-
     @Override
     public Path findPath(PathRequest request) {
         Grid grid = request.getGrid();
         Cell start = request.getStartCell();
         Cell goal = request.getGoalCell();
-
         Map<Cell, Double> dist = new HashMap<>();
         Map<Cell, Cell> prev = new HashMap<>();
         Set<Cell> visited = new HashSet<>();
-
-        //TreeSet is used instead of PriorityQueue to ensure stable and consistent results when costs tie.
         TreeSet<Cell> pq = new TreeSet<>(
                 Comparator.comparingDouble((Cell c) -> dist.getOrDefault(c, Double.POSITIVE_INFINITY))
                         .thenComparingInt(Cell::getRow)
@@ -27,16 +23,12 @@ public class DijkstraPathFinder implements PathFinder {
 
         dist.put(start, 0.0);
         pq.add(start);
-
         while (!pq.isEmpty()) {
             Cell u = pq.pollFirst();
             double uDist = dist.get(u);
-
             if (visited.contains(u)) continue;
             visited.add(u);
-
             if (u.equals(goal)) break;
-
             List<Cell> neighbors = new ArrayList<>(grid.getNeighbors(u));
             neighbors.sort((a, b) -> {
                 int rowCmp = Integer.compare(a.getRow(), b.getRow());
@@ -46,10 +38,8 @@ public class DijkstraPathFinder implements PathFinder {
 
             for (Cell v : neighbors) {
                 if (visited.contains(v)) continue;
-
                 double alt = uDist + v.getWeight();
                 double oldDist = dist.getOrDefault(v, Double.POSITIVE_INFINITY);
-
                 if (alt < oldDist) {
                     pq.remove(v);
                     dist.put(v, alt);
@@ -62,7 +52,6 @@ public class DijkstraPathFinder implements PathFinder {
         if (!dist.containsKey(goal)) {
             return Path.notFound();
         }
-
         List<Cell> path = new ArrayList<>();
         Cell cur = goal;
         while (cur != null) {
@@ -70,13 +59,10 @@ public class DijkstraPathFinder implements PathFinder {
             if (cur.equals(start)) break;
             cur = prev.get(cur);
         }
-
         Collections.reverse(path);
         double totalCost = dist.get(goal);
-
         return new Path(path, totalCost);
     }
-
     @Override
     public String getFinderName() {
         return "Dijkstra (Stable Deterministic)";

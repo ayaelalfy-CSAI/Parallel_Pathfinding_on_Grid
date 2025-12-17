@@ -12,7 +12,6 @@ public class Grid {
     private static final int[][] DIRECTIONS = {
             {-1, 0}, {1, 0}, {0, -1}, {0, 1}
     };
-
     public Grid(int rows, int cols, int maxWeight, double obstacleDensity) {
         this.rows = rows;
         this.cols = cols;
@@ -20,7 +19,6 @@ public class Grid {
         this.cells = new Cell[rows][cols];
         initializeRandomGrid(maxWeight);
     }
-
     public Grid(Grid original) {
         this.rows = original.rows;
         this.cols = original.cols;
@@ -34,7 +32,6 @@ public class Grid {
             }
         }
     }
-
 
     private void initializeRandomGrid(int maxWeight) {
         Random rand = new Random();
@@ -51,7 +48,6 @@ public class Grid {
             }
         }
     }
-
     public void resetAllCells() {
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
@@ -69,26 +65,20 @@ public class Grid {
     public boolean isWalkable(Cell cell) {
         return cell != null && cell.getWeight() > 0;
     }
-
     public List<Cell> getNeighbors(Cell cell) {
         List<Cell> neighbors = new ArrayList<>();
-
         for (int[] direction : DIRECTIONS) {
             int newRow = cell.getRow() + direction[0];
             int newCol = cell.getCol() + direction[1];
-
             Cell neighbor = getCell(newRow, newCol);
-
             if (isWalkable(neighbor)) {
                 neighbors.add(neighbor);
             }
         }
         return neighbors;
     }
-
     public int getRows() { return rows; }
     public int getCols() { return cols; }
-
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();

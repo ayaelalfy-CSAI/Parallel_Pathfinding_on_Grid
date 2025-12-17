@@ -22,7 +22,6 @@ public class Path {
     public List<Cell> getCells() { return cells; }
     public double getTotalCost() { return totalCost; }
     public boolean isFound() { return found; }
-
     @Override
     public String toString() {
         if (!found) {
